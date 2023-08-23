@@ -12,17 +12,24 @@ Modbus::Modbus(HardwareSerial &st)
 }
 
 
-bool Modbus::init(int mode)
+bool Modbus::init(int mode, bool en_log)
 {
      this->mode_ =  mode;
+     this->log   =  en_log;
      pinMode(mode_,OUTPUT);
      digitalWrite(mode_, 0);  
+     
      return true;
+}
+
+void Modbus::setTimeout(uint16_t timeout)
+{
+  timeout_ = timeout;
 }
 
 byte Modbus::byteRead(int index)
 {
-  return dataRx[index];
+  return rawRx[index+3];
 }
 
 int Modbus::blockRead(int index)
@@ -89,7 +96,7 @@ long Modbus::holdingRegisterRead(int id, int address, int block)
 
 long Modbus::inputRegisterRead(int address)
 {
-   return inputRegisterRead(SlaveID , Input_Register, 1);
+   return inputRegisterRead(SlaveID , address, 1);
 }
 
 long Modbus::inputRegisterRead(int id, int address, int block)
@@ -116,10 +123,10 @@ long Modbus::inputRegisterRead(int id, int address, int block)
 
 
 
-bool Modbus::requestFrom(int slaveId, int type, int address,int nb)
+int Modbus::requestFrom(int slaveId, int type, int address,int nb)
 {
     
-    address = address - 1;
+    // address = address - 1;
     int crc ;
     txout[0] = slaveId;
     txout[1] = type;
@@ -130,39 +137,36 @@ bool Modbus::requestFrom(int slaveId, int type, int address,int nb)
     crc = this->CheckCRC(txout,6);
     txout[6] = crc ;
     txout[7] = crc >> 8;
-    
-    
+ 
+     
+    if(log){
+      Serial.print("TX: ");
+       for(int i =0; i < 8; i++)
+            {
+                Serial.printf("%02X ",txout[i] );
+            }
+            Serial.print("\t");
+     }
 
-      //  for(int i =0; i < 8; i++)
-      //       {
-      //           if(txout[i] < 16)
-      //           {
-      //               Serial.print("0");
-      //           }
-      //           Serial.print(txout[i],HEX);
-      //       }
-      //       Serial.println();
-
-    
     digitalWrite(mode_,1);
     delay(1);
     this->s->write(txout,8);
     this->s->flush();
     digitalWrite(mode_,0);
     delay(1);
-    long t = millis();
+    uint32_t t = millis();
     lenRx   = 0;
     datalen = 0;
-    byte ll = 0;
-    byte rx;
+    int ll = 0;
+    int rx;
     byte found = 0;
-    
   
-    while(millis() - t < 100){
+    while((millis() - t) < timeout_){
        if(this->s->available())
        {
         rx = this->s->read();
-       
+        t = millis();
+        
         if(found == 0)
         {
           if(txout[ll] == rx){ll++;}else{ll = 0;}
@@ -172,7 +176,7 @@ bool Modbus::requestFrom(int slaveId, int type, int address,int nb)
           }
         }
         else if(found == 1){
-        //  Serial.print("Len: ");
+        // Serial.print("Len: ");
         //  Serial.println(rx,DEC);
          rawRx[0] = txout[0];
          rawRx[1] = txout[1];
@@ -183,56 +187,149 @@ bool Modbus::requestFrom(int slaveId, int type, int address,int nb)
         else if(found == 2)
         {
          this->rawRx[lenRx++] =  rx;
-         if(lenRx >= rawRx[2] + 5)
-         {
-          break;
-         }
+         if(lenRx >= rawRx[2] + 5) { break; }
         }
- 
-        t = millis();
+        
        }
+        
 
     }
 
-
-        // for(int i =0; i < lenRx; i++)
-        //     {
-        //         if(rawRx[i] < 16)
-        //         {
-        //             Serial.print("0");
-        //         }
-        //         Serial.print(rawRx[i],HEX);
-        //     }
-        //     Serial.println();
-
+    if(log){
+        Serial.print("RX: ");
+        for(int i =0; i < lenRx; i++)
+            {
+             Serial.printf("%02X ",rawRx[i] );
+            }
+            Serial.println();
+     }
 
     if(lenRx > 2){
         int crc1 = rawRx[lenRx - 1] <<8 | rawRx[lenRx - 2];
         int crc2 = CheckCRC(rawRx, lenRx - 2);
+        //Serial.printf("CRC1: %04X CRC2: %04X\n",crc1, crc2);
 
-        if(crc1 == crc2)
-        {
+         if(crc1 == crc2)
+          {
         
-         datalen = rawRx[2];
+            datalen = rawRx[2];
 
-         for(int i = 0; i < datalen;i++){
-            dataRx[i] = rawRx[i+3];
-         }
-
-
-
-          return true;
-        }else{
-            return false;
-        }
+        //  for(int i = 0; i < datalen;i++){
+        //     dataRx[i] = rawRx[i+3];
+        //   }
+           return datalen;
+          }
+         else{ return -1; }
     }else{
-        return false;
+        return -1;
     }
 }
 
 
 
-void Modbus::RxRead(byte *raw, uint8_t &rlen)
+
+
+
+
+int Modbus::ReadCoilReg(int add)
+{
+    return ReadCoilReg(1,  add, 1);
+}
+
+int Modbus::ReadCoilReg(int slaveId, int add)
+{
+    return ReadCoilReg( slaveId, add, 1);
+}
+
+int Modbus::ReadCoilReg(int slaveId, int add, int nbit)
+{
+   if(requestFrom(slaveId,Coil_Register,add,nbit))
+   {
+    return byteRead(0);
+   }else
+   {
+    return -1;
+   }
+ 
+}
+
+int Modbus::ReadDiscretReg(int add)
+{
+    return ReadDiscretReg(1,add,1);
+}
+
+int Modbus::ReadDiscretReg(int slaveId, int add)
+{
+    return ReadDiscretReg(slaveId,add,1);
+}
+
+int Modbus::ReadDiscretReg(int slaveId, int add, int nbit)
+{
+    if(requestFrom(slaveId,Discret_Register,add,nbit)) {
+    return byteRead(0);
+   }
+   else {
+    return -1;
+   }
+}
+
+int Modbus::ReadHoldingReg(int add)
+{
+    return 0;
+}
+
+int Modbus::ReadHoldingReg(int slaveId, int add)
+{
+    return 0;
+}
+
+int Modbus::ReadHoldingReg(int slaveId, int add, int nbyte)
+{
+    return 0;
+}
+
+int Modbus::ReadInputReg(int add)
+{
+    return 0;
+}
+
+int Modbus::ReadInputReg(int slaveId, int add)
+{
+    return 0;
+}
+
+int Modbus::ReadInputReg(int slaveId, int add, int nbyte)
+{
+    return 0;
+}
+
+int8_t Modbus::uint8(int add)
+{
+    return rawRx[add*2+3];
+}
+
+uint16_t Modbus::uint16(int add)
+{
+    int add_ = (add)*2 + 3;
+ 
+    return (rawRx[add_] << 8 | rawRx[add_+1]);
+}
+
+uint32_t Modbus::uint32(int add, bool byteHL)
+{
+    uint32_t val ;
+    if (byteHL)
+    {
+      val = uint16(add) << 16 | uint16(add+1);
+    }
+    else
+    {
+      val = uint16(add+1)<< 16 | uint16(add);
+    }
+    return val;
+}
+
+void Modbus::RxRaw(byte *raw, uint8_t &rlen)
 {
    
    
@@ -250,7 +347,7 @@ void Modbus::RxRead(byte *raw, uint8_t &rlen)
 }
 
 
-void Modbus::TxRead(byte *raw, uint8_t &rlen)
+void Modbus::TxRaw(byte *raw, uint8_t &rlen)
 {
    
    
