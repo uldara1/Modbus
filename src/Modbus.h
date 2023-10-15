@@ -84,13 +84,16 @@ public:
     int ReadInputReg(int slaveId, int add, int nbyte);
 
 
-    int8_t   uint8(int add);
+    uint8_t   uint8(int add);
+    int8_t    int8(int add);
+
     uint16_t uint16(int add);
-    uint32_t uint32(int add, bool byteHL = true);
+    int16_t  int16(int add);
     
+    uint32_t uint32(int add, bool byteHL = true);
 
+    uint16_t CheckCRC(uint8_t *buf, uint16_t len);
 
-    int CheckCRC(byte *buf, int len);
 };
 
 //  #else
